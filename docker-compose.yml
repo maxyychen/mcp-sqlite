@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-sqlite-server:latest
+    container_name: mcp-sqlite-server
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist database outside container
+      - ./data:/app/data
+      # Persist logs outside container
+      - ./logs:/app/logs
+      # Mount custom config (optional)
+      - ./config/config.yaml:/app/config/config.yaml:ro
+    environment:
+      - DATABASE_PATH=/app/data/database.db
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - DEBUG=false
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  mcp-data:
+  mcp-logs:

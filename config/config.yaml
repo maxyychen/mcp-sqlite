@@ -1,0 +1,24 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  debug: true
+
+database:
+  path: "./data/database.db"
+  connection_timeout: 30
+  max_connections: 5
+
+mcp:
+  server_name: "sqlite-crud-server"
+  server_version: "1.0.0"
+  max_tool_execution_time: 60
+
+security:
+  enable_auth: false
+  max_query_results: 1000
+  allow_raw_queries: true
+  read_only_mode: false
+
+logging:
+  level: "INFO"
+  file: "./logs/server.log"
