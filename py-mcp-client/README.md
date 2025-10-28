@@ -24,6 +24,64 @@ A Python chatbot that integrates with the MCP SQLite Server using local Ollama A
        └────────────── Tool Calls ─────────────────┘
 ```
 
+For a detailed data flow diagram, see [dataflow.md](dataflow.md).
+
+## How It Works: Key Flow Highlights
+
+**1. User Input → Chatbot**
+   - User asks a question in natural language
+
+**2. Chatbot → Ollama Client**
+   - Sends conversation history + available tools array via API
+   - Tools are passed as structured data, not in prompt text
+
+**3. Ollama Client → LLM Model**
+   - Forwards the request to the LLM (e.g., Llama 3.1)
+   - Model is trained to recognize tools from API structure
+
+**4. LLM Analysis**
+   - Model analyzes user intent
+   - Decides if it needs to call tools to answer the question
+   - Generates response with `tool_calls` field if tools needed
+
+**5. Ollama Parsing**
+   - Ollama automatically parses LLM output into structured JSON
+   - Extracts tool calls into `message.tool_calls` field
+
+**6. Chatbot → MCP Client**
+   - Chatbot extracts tool name and arguments from `tool_calls`
+   - Sends to MCP Client for execution
+
+**7. MCP Client → MCP Server**
+   - HTTP POST to `/mcp/v1/tools/call`
+   - Sends tool name and arguments as JSON
+
+**8. MCP Server Execution**
+   - Executes actual business logic (SQL queries, file operations, etc.)
+   - Interacts with SQLite database
+   - Returns structured result
+
+**9. Result Back to Chatbot**
+   - MCP Client returns formatted result
+   - Chatbot appends to conversation history with `role: "tool"`
+
+**10. Loop Back to LLM**
+   - Sends updated history (now includes tool result) back to Ollama
+   - LLM sees the tool result in context
+   - Generates natural language response for the user
+
+**11. Final Response to User**
+   - No more tool calls needed
+   - Displays formatted answer to user
+
+### Multi-Step Tool Calling
+
+The chatbot supports **iterative tool calling** (up to 5 iterations), enabling:
+- Chain multiple tool calls sequentially
+- Use results from one tool to inform the next call
+- Build complex multi-step solutions automatically
+- Handle follow-up queries that require additional data
+
 ## Prerequisites
 
 1. **MCP SQLite Server** running on `http://localhost:8080`
@@ -105,3 +163,5 @@ python chatbot.py
 
 ```
 You: Create a table called users with id, name, and email columns
+
+
