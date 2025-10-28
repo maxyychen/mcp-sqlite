@@ -17,7 +17,11 @@ def validate_column_name(name: str) -> bool:
 
 
 def validate_sql_type(sql_type: str) -> bool:
-    """Validate SQLite data type."""
+    """Validate SQLite data type.
+
+    Supports base types and compound types like 'INTEGER PRIMARY KEY'.
+    Extracts the base type and validates it.
+    """
     valid_types = {
         "INTEGER",
         "TEXT",
@@ -28,4 +32,7 @@ def validate_sql_type(sql_type: str) -> bool:
         "DATE",
         "DATETIME",
     }
-    return sql_type.upper() in valid_types
+
+    # Extract base type (first word) to handle compound types like "INTEGER PRIMARY KEY"
+    base_type = sql_type.strip().split()[0].upper()
+    return base_type in valid_types

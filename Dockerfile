@@ -22,7 +22,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Create non-root user for security
-RUN useradd -m -u 1000 mcpuser && \
+RUN useradd -m -u 1001 mcpuser && \
     mkdir -p /app/data /app/logs && \
     chown -R mcpuser:mcpuser /app
 

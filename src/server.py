@@ -1,5 +1,6 @@
 """FastAPI server with HTTP+SSE support for MCP protocol."""
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, Optional
 
@@ -17,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Initialize components
 mcp_handler = MCPHandler()
-db_manager = DatabaseManager("./data/database.db")
+# Use DATABASE_PATH env var if set, otherwise default to ./data/database.db
+db_path = os.getenv("DATABASE_PATH", "./data/database.db")
+db_manager = DatabaseManager(db_path)
 crud_ops = CRUDOperations(db_manager)
 
 

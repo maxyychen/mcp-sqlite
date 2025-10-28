@@ -97,7 +97,10 @@ class CRUDOperations:
     ) -> Dict[str, Any]:
         """Execute custom SQL query (with safety controls)."""
         if read_only and not query.strip().upper().startswith("SELECT"):
-            raise DatabaseError("Only SELECT queries allowed in read-only mode")
+            raise DatabaseError(
+                "Only SELECT queries allowed in read-only mode. "
+                "To execute write operations, set read_only=False in the arguments."
+            )
 
         params = params or []
 

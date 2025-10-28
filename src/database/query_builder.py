@@ -19,7 +19,8 @@ class QueryBuilder:
                 raise ValueError(f"Invalid SQL type: {col_type}")
 
             col_def = f"{col_name} {col_type.upper()}"
-            if col_name == primary_key:
+            # Only add PRIMARY KEY if not already in the type string
+            if col_name == primary_key and "PRIMARY KEY" not in col_type.upper():
                 col_def += " PRIMARY KEY"
             columns.append(col_def)
 

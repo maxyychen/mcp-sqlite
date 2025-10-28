@@ -43,7 +43,9 @@ docker run -d -p 8080:8080 \
 
 ```bash
 # Start services
-docker-compose up -d
+docker-compose up -d  
+or  
+docker compose up -d
 
 # View logs
 docker-compose logs -f
