@@ -1,23 +1,28 @@
-"""FastAPI server with HTTP+SSE support for MCP protocol."""
+"""FastAPI server with MCP Streamable HTTP transport support."""
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel
 
 from .mcp_handler import MCPHandler
 from .database.connection import DatabaseManager
 from .database.crud_operations import CRUDOperations
+from .jsonrpc.handler import JSONRPCHandler
+from .jsonrpc.models import JSONRPCRequest, JSONRPCResponse
+from .mcp_transport import MCPTransport
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize components
 mcp_handler = MCPHandler()
+jsonrpc_handler = JSONRPCHandler()
+mcp_transport = MCPTransport(jsonrpc_handler)
+
 # Use DATABASE_PATH env var if set, otherwise default to ./data/database.db
 db_path = os.getenv("DATABASE_PATH", "./data/database.db")
 db_manager = DatabaseManager(db_path)
@@ -171,70 +176,132 @@ def register_all_tools():
     )
 
 
+def register_jsonrpc_methods():
+    """Register all JSON-RPC 2.0 methods."""
+
+    # Method: initialize
+    async def initialize(params: dict):
+        return {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {"listChanged": False},
+                "logging": {}
+            },
+            "serverInfo": {
+                "name": "mcp-sqlite-server",
+                "version": "1.0.0"
+            }
+        }
+
+    # Method: ping
+    async def ping(params: dict):
+        return {}
+
+    # Method: tools/list
+    async def tools_list(params: dict):
+        tools = mcp_handler.list_tools()
+        return {"tools": tools}
+
+    # Method: tools/call
+    async def tools_call(params: dict):
+        name = params.get("name")
+        arguments = params.get("arguments", {})
+
+        if not name:
+            raise ValueError("Tool name is required")
+
+        result = await mcp_handler.execute_tool(name, arguments)
+        return {
+            "content": [{"type": "text", "text": str(result)}]
+        }
+
+    # Register methods
+    jsonrpc_handler.register_method("initialize", initialize)
+    jsonrpc_handler.register_method("ping", ping)
+    jsonrpc_handler.register_method("tools/list", tools_list)
+    jsonrpc_handler.register_method("tools/call", tools_call)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for FastAPI app."""
-    logger.info("Starting MCP server...")
+    logger.info("Starting MCP server with Streamable HTTP transport...")
     register_all_tools()
-    logger.info(f"Registered {len(mcp_handler.tools)} tools")
+    register_jsonrpc_methods()
+    mcp_transport.start_cleanup()
+    logger.info(f"Registered {len(mcp_handler.tools)} MCP tools")
+    logger.info(f"Registered {len(jsonrpc_handler.methods)} JSON-RPC methods")
+    logger.info("MCP session cleanup task started")
     yield
     logger.info("Shutting down MCP server...")
+    mcp_transport.stop_cleanup()
 
 
 app = FastAPI(
     title="MCP SQLite Server",
-    description="MCP server with HTTP+SSE for SQLite CRUD operations",
-    version="1.0.0",
+    description="MCP server with Streamable HTTP transport for SQLite CRUD operations",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
 
-# Request/Response models
-class ToolCallRequest(BaseModel):
-    name: str
-    arguments: dict
+# MCP Streamable HTTP Endpoint (Unified POST + GET)
+@app.post("/mcp")
+async def mcp_post_endpoint(request: Request, jsonrpc_request: JSONRPCRequest):
+    """MCP Streamable HTTP POST endpoint.
+
+    Per MCP spec: Every JSON-RPC message from client MUST be a new HTTP POST.
+    Handles MCP headers: Mcp-Session-Id, Mcp-Protocol-Version.
+    """
+    return await mcp_transport.handle_post_request(request, jsonrpc_request)
 
 
-class MCPResponse(BaseModel):
-    content: list[dict]
-    isError: bool = False
+@app.get("/mcp")
+async def mcp_get_endpoint(request: Request):
+    """MCP Streamable HTTP GET endpoint.
+
+    Per MCP spec: Opens an SSE stream allowing server to push messages.
+    Supports resumption via Last-Event-Id header.
+    """
+    return await mcp_transport.handle_get_request(request)
 
 
+# Legacy JSON-RPC 2.0 Endpoints (for backward compatibility)
+@app.post("/")
+@app.post("/rpc")
+@app.post("/jsonrpc")
+async def jsonrpc_endpoint(request: JSONRPCRequest):
+    """Legacy JSON-RPC 2.0 endpoint (no MCP headers).
+
+    Kept for backward compatibility with non-MCP clients.
+    """
+    response = await jsonrpc_handler.handle_request(request)
+    return response.model_dump(exclude_none=True)
+
+
+# Monitoring Endpoints
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "service": "mcp-sqlite-server"}
+    return {
+        "status": "healthy",
+        "service": "mcp-sqlite-server",
+        "version": "2.1.0",
+        "transport": "MCP Streamable HTTP",
+        "protocol_version": "2024-11-05"
+    }
 
 
-@app.post("/mcp/v1/tools/list")
-async def list_tools():
-    """List all available MCP tools."""
-    tools = mcp_handler.list_tools()
-    return {"tools": tools}
+@app.get("/sse")
+async def legacy_sse_endpoint():
+    """Legacy SSE endpoint (deprecated).
 
-
-@app.post("/mcp/v1/tools/call")
-async def call_tool(request: ToolCallRequest):
-    """Execute an MCP tool."""
-    try:
-        result = await mcp_handler.execute_tool(request.name, request.arguments)
-        return MCPResponse(
-            content=[{"type": "text", "text": str(result)}], isError=False
-        )
-    except Exception as e:
-        logger.error(f"Tool execution error: {e}")
-        return MCPResponse(content=[{"type": "text", "text": str(e)}], isError=True)
-
-
-@app.get("/mcp/v1/sse")
-async def sse_endpoint():
-    """SSE endpoint for real-time notifications."""
-
+    Use GET /mcp with Mcp-Session-Id header instead.
+    """
     async def event_generator() -> AsyncGenerator[dict, None]:
-        # Yield SSE events
         yield {
             "event": "message",
-            "data": '{"type": "notification", "message": "Connected to MCP server"}',
+            "data": '{"type": "notification", "message": "Legacy SSE endpoint. Use GET /mcp instead."}',
         }
 
     return EventSourceResponse(event_generator())

@@ -1,15 +1,19 @@
 # MCP SQLite Server
 
-A Model Context Protocol (MCP) server with HTTP+SSE transport for SQLite database CRUD operations.
+A Model Context Protocol (MCP) server with **Streamable HTTP transport** for SQLite database CRUD operations.
 
 ## Features
 
-- ✅ **MCP Protocol Compliant** - Full HTTP+SSE implementation
+- ✅ **MCP Streamable HTTP** - Full MCP specification compliance (2024-11-05)
+- ✅ **Stateful Sessions** - Session management with automatic cleanup
+- ✅ **Bidirectional Communication** - SSE for server-to-client messaging
+- ✅ **Stream Resumability** - Reconnect and resume from last event
 - ✅ **8 CRUD Tools** - Complete database operations
 - ✅ **Security First** - SQL injection prevention, input validation
 - ✅ **Docker Ready** - Multi-stage build, production-optimized (~150-200MB)
 - ✅ **Type Safe** - Full Python type hints and Pydantic models
 - ✅ **Async Support** - FastAPI async/await patterns
+- ✅ **Backward Compatible** - Legacy JSON-RPC 2.0 endpoints still work
 
 ## Quick Start
 
@@ -56,54 +60,126 @@ docker-compose down
 
 ## Testing the Server
 
+### MCP Streamable HTTP (Recommended)
+
 ```bash
 # Check health
 curl http://localhost:8080/health
 
+# Initialize MCP session (note the /mcp endpoint)
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {},
+      "clientInfo": {"name": "curl-client", "version": "1.0"}
+    }
+  }'
+
+# Save the Mcp-Session-Id from response headers!
+# Example: Mcp-Session-Id: 318a19a9-b757-4c0b-9ddb-a8dc1b40d240
+
+# Ping server (use your session ID)
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "ping",
+    "params": {}
+  }'
+
 # List available tools
-curl -X POST http://localhost:8080/mcp/v1/tools/list
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/list",
+    "params": {}
+  }'
+
+# Open SSE stream for server notifications
+curl -N http://localhost:8080/mcp \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE"
 
 # Create a table
-curl -X POST http://localhost:8080/mcp/v1/tools/call \
+curl -X POST http://localhost:8080/mcp \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "create_table",
-    "arguments": {
-      "table_name": "users",
-      "schema": {
-        "id": "INTEGER",
-        "name": "TEXT",
-        "email": "TEXT"
-      },
-      "primary_key": "id"
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "create_table",
+      "arguments": {
+        "table_name": "users",
+        "schema": {
+          "id": "INTEGER",
+          "name": "TEXT",
+          "email": "TEXT"
+        },
+        "primary_key": "id"
+      }
     }
   }'
 
 # Insert a record
-curl -X POST http://localhost:8080/mcp/v1/tools/call \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE" \
   -d '{
-    "name": "insert_record",
-    "arguments": {
-      "table_name": "users",
-      "data": {
-        "id": 1,
-        "name": "John Doe",
-        "email": "john@example.com"
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+      "name": "insert_record",
+      "arguments": {
+        "table_name": "users",
+        "data": {
+          "id": 1,
+          "name": "John Doe",
+          "email": "john@example.com"
+        }
       }
     }
   }'
 
 # Query records
-curl -X POST http://localhost:8080/mcp/v1/tools/call \
+curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
+  -H "Mcp-Session-Id: YOUR_SESSION_ID_HERE" \
   -d '{
-    "name": "query_records",
-    "arguments": {
-      "table_name": "users",
-      "limit": 10
+    "jsonrpc": "2.0",
+    "id": 6,
+    "method": "tools/call",
+    "params": {
+      "name": "query_records",
+      "arguments": {
+        "table_name": "users",
+        "limit": 10
+      }
     }
   }'
+```
+
+### Legacy JSON-RPC 2.0 (Still Supported)
+
+For backward compatibility, the old endpoints still work:
+
+```bash
+# These work without session management
+curl -X POST http://localhost:8080/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}'
 ```
 
 ## Available MCP Tools
@@ -237,12 +313,34 @@ Execute custom SQL query (with safety controls).
 
 ## API Endpoints
 
+### MCP Streamable HTTP (Primary)
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/mcp` | MCP requests with session management |
+| GET | `/mcp` | Open SSE stream for server notifications |
 | GET | `/health` | Health check |
-| POST | `/mcp/v1/tools/list` | List available tools |
-| POST | `/mcp/v1/tools/call` | Execute a tool |
-| GET | `/mcp/v1/sse` | SSE stream for notifications |
+
+**Required Headers:**
+- `Mcp-Session-Id`: Session ID (after initialize)
+- `Mcp-Protocol-Version`: `2024-11-05`
+- `Accept`: `application/json, text/event-stream`
+
+### Legacy Endpoints (Backward Compatible)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/`, `/rpc`, `/jsonrpc` | Plain JSON-RPC 2.0 (no sessions) |
+| GET | `/sse` | Legacy SSE (deprecated) |
+
+### JSON-RPC Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Initialize MCP session (returns session ID) |
+| `ping` | Keep-alive ping |
+| `tools/list` | List available tools |
+| `tools/call` | Execute a tool |
 
 ## Configuration
 
